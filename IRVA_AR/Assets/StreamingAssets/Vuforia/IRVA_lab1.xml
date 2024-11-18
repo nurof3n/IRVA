@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<QCARConfig>
+  <Tracking>
+    <ImageTarget name="classictextures_thumbnail_0" size="1.000000 0.562500" />
+    <ImageTarget name="bingus_black" size="1.000000 1.111916" />
+    <ImageTarget name="bingus" size="1.000000 0.810962" />
+  </Tracking>
+</QCARConfig>
