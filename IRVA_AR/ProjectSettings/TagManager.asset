@@ -7,6 +7,7 @@ TagManager:
   - enemy
   - baseSDK
   - Point
+  - Hosted
   layers:
   - Default
   - TransparentFX

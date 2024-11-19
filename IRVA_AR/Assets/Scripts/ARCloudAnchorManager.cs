@@ -1,11 +1,12 @@
 using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.XR.ARFoundation;
 using Google.XR.ARCoreExtensions;
 using TMPro;
 
-public class AnchorCreatedEvent : UnityEvent<Transform> { }
+public class AnchorCreatedEvent : UnityEvent<string, Transform> { }
 
 /* TODO 1. Enable ARCore Cloud Anchors API on Google Cloud Platform */
 public class ARCloudAnchorManager : MonoBehaviour
@@ -16,9 +17,9 @@ public class ARCloudAnchorManager : MonoBehaviour
     [SerializeField]
     TMP_Text statusUpdate;
 
-    private ARAnchorManager  arAnchorManager = null;
-    private ARAnchor pendingHostAnchor = null;
-    private string anchorIdToResolve;
+    private ARAnchorManager arAnchorManager = null;
+    private List<ARAnchor> pendingHostAnchors = new();
+    private List<string> anchorIdsToResolve = new();
     private AnchorCreatedEvent anchorCreatedEvent = null;
     public static ARCloudAnchorManager Instance { get; private set; }
     public GameObject middle;
@@ -35,7 +36,7 @@ public class ARCloudAnchorManager : MonoBehaviour
         }
 
         anchorCreatedEvent = new AnchorCreatedEvent();
-        anchorCreatedEvent.AddListener((t) => CloudAnchorObjectPlacement.Instance.RecreatePlacement(t));
+        anchorCreatedEvent.AddListener((id, t) => CloudAnchorObjectPlacement.Instance.RecreatePlacement(id, t));
     }
 
     private Pose GetCameraPose()
@@ -44,11 +45,17 @@ public class ARCloudAnchorManager : MonoBehaviour
     }
     public void QueueAnchor(ARAnchor arAnchor)
     {
-        pendingHostAnchor = arAnchor;
+        pendingHostAnchors.Add(arAnchor);
+    }
+
+    public void ClearQueue()
+    {
+        pendingHostAnchors.Clear();
     }
 
     public IEnumerator DisplayStatus(string text)
     {
+        Debug.Log(text);
         statusUpdate.text = text;
         yield return new WaitForSeconds(3);
         statusUpdate.text = "";
@@ -56,35 +63,64 @@ public class ARCloudAnchorManager : MonoBehaviour
 
     public void HostAnchor()
     {
+        if (pendingHostAnchors.Count < 1) return;
+
         /* TODO 3.1 Get FeatureMapQuality */
-        FeatureMapQuality quality = new FeatureMapQuality();
+        FeatureMapQuality quality = arAnchorManager.EstimateFeatureMapQualityForHosting(GetCameraPose());
         StartCoroutine(DisplayStatus("HostAnchor call in progress. Feature Map Quality: " + quality));
 
         if (quality != FeatureMapQuality.Insufficient)
         {
             /* TODO 3.2 Start the hosting process */
-            HostCloudAnchorPromise cloudAnchor;
-
-            /* Wait for the promise to solve (Hint! Pass the HostCloudAnchorPromise variable to the coroutine) */
-            StartCoroutine(WaitHostingResult());
+            for (int i = 0; i < pendingHostAnchors.Count; i++)
+            {
+                ARAnchor pendingHostAnchor = pendingHostAnchors[i];
+                HostCloudAnchorPromise cloudAnchor = arAnchorManager.HostCloudAnchorAsync(pendingHostAnchor, 365);
+                StartCoroutine(WaitHostingResult(cloudAnchor));
+            }
         }
+
+        ClearQueue();
     }
 
     public void Resolve()
     {
+        // Clear already existing objects
+        CloudAnchorObjectPlacement.Instance.RemovePlacement();
+
+        if (anchorIdsToResolve.Count < 1) return;
         StartCoroutine(DisplayStatus("Resolve call in progress"));
 
         /* TODO 5 Start the resolve process and wait for the promise */
-
+        for (int i = 0; i < anchorIdsToResolve.Count; i++)
+        {
+            var anchorIdToResolve = anchorIdsToResolve[i];
+            ResolveCloudAnchorPromise resolvePromise = arAnchorManager.ResolveCloudAnchorAsync(anchorIdToResolve);
+            StartCoroutine(WaitResolvingResult(anchorIdToResolve, resolvePromise));
+        }
     }
 
-    private IEnumerator WaitHostingResult()
+    private IEnumerator WaitHostingResult(HostCloudAnchorPromise cloudAnchor)
     {
         /* TODO 3.3 Wait for the promise. Save the id if the hosting succeeded */
-        yield return new WaitForSeconds(1.0f);
+        yield return cloudAnchor;
+
+        if (cloudAnchor.State == PromiseState.Cancelled) yield break;
+
+        var result = cloudAnchor.Result;
+        if (result.CloudAnchorState == CloudAnchorState.Success)
+        {
+            anchorIdsToResolve.Add(result.CloudAnchorId);
+            StartCoroutine(DisplayStatus("Anchor hosted successfully!"));
+        }
+        else
+        {
+            StartCoroutine(DisplayStatus("Error while hosting cloud anchor: " + result.CloudAnchorState));
+            yield return new WaitForSeconds(3);
+        }
     }
 
-    private IEnumerator WaitResolvingResult(ResolveCloudAnchorPromise resolvePromise)
+    private IEnumerator WaitResolvingResult(string anchorId, ResolveCloudAnchorPromise resolvePromise)
     {
         yield return resolvePromise;
 
@@ -93,12 +129,13 @@ public class ARCloudAnchorManager : MonoBehaviour
 
         if (result.CloudAnchorState == CloudAnchorState.Success)
         {
-            anchorCreatedEvent?.Invoke(result.Anchor.transform);
+            anchorCreatedEvent?.Invoke(anchorId, result.Anchor.transform);
             StartCoroutine(DisplayStatus("Anchor resolved successfully!"));
         }
         else
         {
-            StartCoroutine(DisplayStatus("Error while resolving cloud anchor"));
+            StartCoroutine(DisplayStatus("Error while resolving cloud anchor:" + result.CloudAnchorState));
+            yield return new WaitForSeconds(3);
         }
     }
 }

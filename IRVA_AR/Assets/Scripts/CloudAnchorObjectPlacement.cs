@@ -1,4 +1,3 @@
-using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -9,9 +8,14 @@ using UnityEngine.XR.ARSubsystems;
 public class CloudAnchorObjectPlacement : MonoBehaviour
 {
     /// <summary>
-    /// The object instantiated as a result of a successful raycast intersection with a plane.
+    /// The objects instantiated as a result of a successful raycast intersection with a plane.
     /// </summary>
-    public GameObject spawnedObject { get; private set; }
+    public List<GameObject> spawnedObjects { get; private set; }
+
+    /// <summary>
+    /// A map of all the spawned anchors (objects that are hosted/resolved).
+    /// </summary>
+    public Dictionary<string, GameObject> spawnedAnchors = new();
 
     /// <summary>
     /// The first-person camera being used to render the passthrough camera image (i.e. AR
@@ -38,13 +42,12 @@ public class CloudAnchorObjectPlacement : MonoBehaviour
         }
 
         m_RaycastManager = GetComponent<ARRaycastManager>();
-        spawnedObject = null;
+        spawnedObjects = new List<GameObject>();
     }
 
     bool TryGetTouchPosition(out Vector2 touchPosition)
     {
-        Touch touch;
-        if (Input.touchCount < 1 || (touch = Input.GetTouch(0)).phase != TouchPhase.Began)
+        if (Input.touchCount < 1 || Input.GetTouch(0).phase != TouchPhase.Began)
         {
             touchPosition = default;
             return false;
@@ -69,10 +72,6 @@ public class CloudAnchorObjectPlacement : MonoBehaviour
     // Update is called once per frame
     void Update()
     {
-        /* Add only one cube on scene */
-        if (spawnedObject != null)
-            return;
-
         if (!TryGetTouchPosition(out Vector2 touchPosition))
             return;
 
@@ -81,11 +80,12 @@ public class CloudAnchorObjectPlacement : MonoBehaviour
             var hitPose = s_Hits[0].pose;
 
             /* TODO 2.1. Instantiate a new prefab on scene */
-            spawnedObject = new GameObject();
+            var spawnedObject = Instantiate(prefab, hitPose.position, hitPose.rotation);
 
             /* TODO 2.2 Attach an anchor to the prefab */
-            ARAnchor anchor = new ARAnchor();
+            ARAnchor anchor = spawnedObject.AddComponent<ARAnchor>();
             spawnedObject.transform.parent = anchor.transform;
+            spawnedObjects.Add(spawnedObject);
 
             /* Send the anchor to ARCloudAnchorManager */
             ARCloudAnchorManager.Instance.QueueAnchor(anchor);
@@ -93,16 +93,33 @@ public class CloudAnchorObjectPlacement : MonoBehaviour
     }
 
     /* Add the object on scene after the anchor has been resolved */
-    public void RecreatePlacement(Transform transform)
+    public void RecreatePlacement(string anchorId, Transform transform)
     {
-        spawnedObject = Instantiate(prefab, transform.position, transform.rotation);
-        spawnedObject.transform.parent = transform;
+        if (spawnedAnchors.ContainsKey(anchorId))
+        {
+            Destroy(spawnedAnchors[anchorId]);
+            spawnedAnchors.Remove(anchorId);
+        }
+        spawnedAnchors[anchorId] = Instantiate(prefab, transform.position, transform.rotation);
+        spawnedAnchors[anchorId].transform.parent = transform;
+        var cube = spawnedAnchors[anchorId].transform.GetChild(0).gameObject;
+        cube.GetComponent<Renderer>().material.color = Color.red;
     }
 
     public void RemovePlacement()
     {
         /* TODO 4 Remove the cube from screen */
-
+        for (int i = 0; i < spawnedObjects.Count; i++)
+        {
+            Destroy(spawnedObjects[i]);
+        }
+        spawnedObjects.Clear();
+        foreach (var anchor in spawnedAnchors)
+        {
+            Destroy(anchor.Value);
+        }
+        spawnedAnchors.Clear();
+        ARCloudAnchorManager.Instance.ClearQueue();
     }
 
     static List<ARRaycastHit> s_Hits = new List<ARRaycastHit>();
